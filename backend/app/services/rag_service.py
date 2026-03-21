@@ -156,32 +156,32 @@ def select_nodes_stream_from_tree(
             },
         )
 
-    final_selection = _request_node_selection(
+    final_selection = None
+    for chunk in _stream_request_node_selection(
         question=question,
         chapters=shortlisted,
         max_chapters=max_nodes,
-    )
+    ):
+        if chunk["type"] == "reasoning":
+            yield _sse(
+                "reasoning",
+                {
+                    "provider": "openrouter",
+                    "model": settings.OPENROUTER_MODEL,
+                    "text": chunk["text"],
+                },
+            )
+        elif chunk["type"] == "error":
+            yield _sse("error", {"message": chunk["message"]})
+            return
+        elif chunk["type"] == "result":
+            final_selection = chunk
+
+    if not final_selection:
+        yield _sse("error", {"message": "Processing failed to yield a final selection."})
+        return
+
     logger.info("[ROUTE] Streaming selection picked node_ids: %s", final_selection["node_ids"])
-
-    if final_selection.get("reasoning"):
-        yield _sse(
-            "reasoning",
-            {
-                "provider": "openrouter",
-                "model": settings.OPENROUTER_MODEL,
-                "text": final_selection.get("reasoning"),
-            },
-        )
-
-    if final_selection.get("reasoning_details") is not None:
-        yield _sse(
-            "reasoning_details",
-            {
-                "provider": "openrouter",
-                "model": settings.OPENROUTER_MODEL,
-                "reasoning_details": final_selection.get("reasoning_details"),
-            },
-        )
 
     yield _sse(
         "selection",
@@ -584,6 +584,161 @@ def _chunk_chapters(chapters: list[dict[str, Any]]) -> list[list[dict[str, Any]]
 
     return batches
 
+def _stream_request_node_selection(
+    question: str,
+    chapters: list[dict[str, Any]],
+    max_chapters: int,
+):
+    api_key = settings.OPENROUTER_API_KEY.strip()
+    if not api_key:
+        yield {"type": "error", "message": "OPENROUTER_API_KEY is not configured."}
+        return
+
+    tree_without_text = [
+        {
+            "node_id": chapter["node_id"],
+            "node_title": chapter["title"],
+            "summary": chapter["summary"],
+        }
+        for chapter in chapters
+    ]
+
+    user_prompt = f"""
+You are given a question and a tree structure of a document.
+Each node contains a node id, node title, and a corresponding summary.
+Your task is to find all nodes that are likely to contain the answer to the question.
+
+Question: {question}
+
+Document tree structure:
+{json.dumps(tree_without_text, indent=2)}
+
+Please output your reasoning first, securely enclosed in <think> and </think> tags.
+Then, output your final node selection array as a JSON object EXACTLY in this format on a new line:
+{{
+    "node_list": ["node_id_1", "node_id_2"]
+}}
+Do not output anything else but your reasoning block and the JSON block.
+"""
+
+    payload = {
+        "model": settings.OPENROUTER_MODEL,
+        "messages": [
+            {"role": "user", "content": user_prompt.strip()},
+        ],
+        "stream": True,
+        "include_reasoning": True,
+        "extra_body": {
+            "reasoning": {
+                "enabled": True
+            }
+        }
+    }
+
+    logger.info(
+        "[OPENROUTER] Streaming node selection request: candidates=%s",
+        len(chapters),
+    )
+    
+    api_url = "https://openrouter.ai/api/v1/chat/completions"
+    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
+    
+    content_buffer = ""
+    json_buffer = ""
+    inside_think_tag = False
+    seen_think_tag = False
+    full_content = ""
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream(
+                "POST",
+                api_url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:") :].strip()
+                    if data == "[DONE]":
+                        break
+                    
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    choice = (event.get("choices") or [{}])[0]
+                    delta = choice.get("delta") or {}
+                    
+                    reasoning_chunk = delta.get("reasoning")
+                    if reasoning_chunk:
+                        yield {"type": "reasoning", "text": reasoning_chunk}
+                        
+                    content_chunk = delta.get("content")
+                    if content_chunk:
+                        full_content += content_chunk
+                        content_buffer += content_chunk
+                        
+                        if not seen_think_tag:
+                            if "<think>" in content_buffer:
+                                seen_think_tag = True
+                                inside_think_tag = True
+                                idx = content_buffer.find("<think>")
+                                content_buffer = content_buffer[idx+7:]
+                            elif "{" in content_buffer and not seen_think_tag:
+                                json_buffer += content_buffer
+                                content_buffer = ""
+                                continue
+                                
+                        if inside_think_tag:
+                            if "</think>" in content_buffer:
+                                idx = content_buffer.find("</think>")
+                                yield {"type": "reasoning", "text": content_buffer[:idx]}
+                                inside_think_tag = False
+                                json_buffer += content_buffer[idx+8:]
+                                content_buffer = ""
+                            else:
+                                yield {"type": "reasoning", "text": content_buffer}
+                                content_buffer = ""
+                        else:
+                            if seen_think_tag:
+                                json_buffer += content_buffer
+                                content_buffer = ""
+
+    except Exception as exc:
+        logger.exception("[OPENROUTER] Streamed node selection request failed")
+        yield {"type": "error", "message": f"Selection stream failed: {exc}"}
+        return
+
+    if not json_buffer.strip() and "node_list" in full_content:
+        json_buffer = full_content
+
+    try:
+        parsed = _parse_model_json(json_buffer)
+    except Exception:
+        parsed = {}
+
+    node_list = parsed.get("node_list", [])
+    valid_ids = {chapter["node_id"] for chapter in chapters}
+    node_ids = [n for n in node_list if n in valid_ids][:max_chapters]
+    
+    if not node_ids:
+        node_ids = [chapter["node_id"] for chapter in chapters[:max_chapters]]
+
+    yield {
+        "type": "result",
+        "node_ids": node_ids,
+        "reasoning": "", 
+        "assistant_content": full_content,
+        "reasoning_details": None,
+    }
+
 def _request_node_selection(
     question: str,
     chapters: list[dict[str, Any]],
@@ -627,6 +782,12 @@ Directly return the final JSON structure. Do not output anything else.
         "messages": [
             {"role": "user", "content": user_prompt},
         ],
+        "include_reasoning": True,
+        "extra_body": {
+            "reasoning": {
+                "enabled": True
+            }
+        }
     }
 
     logger.info(
@@ -687,7 +848,9 @@ def _generate_grounded_answer_from_retrieval(
     system_prompt = (
         "You answer questions only from the provided raw text. "
         "Do not use outside knowledge. "
-        "Do NOT cite chapters or use inline citations. Just tell the answer directly looking at the raw text."
+        "Do NOT cite chapters or use inline citations. Just tell the answer directly looking at the raw text.\n\n"
+        "IMPORTANT: You MUST write out your reasoning process first, explicitly enclosed within <think> and </think> tags. "
+        "After the closing </think> tag, provide your final direct answer."
     )
     user_prompt = (
         f"""
@@ -722,12 +885,18 @@ def _generate_grounded_answer_from_retrieval(
         messages.append({"role": "user", "content": user_prompt})
 
     payload = {
-        "model": settings.GEMINI_MODEL,
+        "model": settings.OPENROUTER_MODEL,
         "messages": messages,
+        "include_reasoning": True,
+        "extra_body": {
+            "reasoning": {
+                "enabled": True
+            }
+        }
     }
 
     message = _post_llm_messages(payload, purpose="answer generation")
-    logger.info("[ANSWER] Final answer received from Gemini")
+    logger.info("[ANSWER] Final answer received from OpenRouter")
     return (message.get("content") or "").strip()
 
 
@@ -755,7 +924,9 @@ def _stream_answer_from_retrieval(
     system_prompt = (
         "You answer questions only from the provided raw text. "
         "Do not use outside knowledge. "
-        "Do NOT cite chapters or use inline citations. Just tell the answer directly looking at the raw text."
+        "Do NOT cite chapters or use inline citations. Just tell the answer directly looking at the raw text.\n\n"
+        "IMPORTANT: You MUST write out your reasoning process first, explicitly enclosed within <think> and </think> tags. "
+        "After the closing </think> tag, provide your final direct answer."
     )
     user_prompt = (
         f"""
@@ -790,21 +961,26 @@ def _stream_answer_from_retrieval(
         messages.append({"role": "user", "content": user_prompt})
 
     payload = {
-        "model": settings.GEMINI_MODEL,
+        "model": settings.OPENROUTER_MODEL,
         "messages": messages,
         "stream": True,
+        "include_reasoning": True,
+        "extra_body": {
+            "reasoning": {
+                "enabled": True
+            }
+        }
     }
 
-    api_key = settings.GOOGLE_API_KEY if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_API_KEY
-    api_key = api_key.strip()
-    api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" if payload.get("model") == settings.GEMINI_MODEL else "https://openrouter.ai/api/v1/chat/completions"
-    timeout = settings.GEMINI_TIMEOUT_SECONDS if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_TIMEOUT_SECONDS
+    api_key = settings.OPENROUTER_API_KEY.strip()
+    api_url = "https://openrouter.ai/api/v1/chat/completions"
+    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
 
     if not api_key:
-        yield _sse("error", {"message": f"{'GOOGLE_API_KEY' if payload.get('model') == settings.GEMINI_MODEL else 'OPENROUTER_API_KEY'} is not configured."})
+        yield _sse("error", {"message": "OPENROUTER_API_KEY is not configured."})
         return
 
-    logger.info("[%s] Starting streamed answer request", "GEMINI" if payload.get("model") == settings.GEMINI_MODEL else "OPENROUTER")
+    logger.info("[OPENROUTER] Starting streamed answer request with %s", settings.OPENROUTER_MODEL)
     yield _sse("log", {"stage": "answer", "message": "llm_stream_start"})
 
     try:
@@ -832,6 +1008,11 @@ def _stream_answer_from_retrieval(
 
                     choice = (event.get("choices") or [{}])[0]
                     delta = choice.get("delta") or {}
+                    
+                    reasoning = delta.get("reasoning")
+                    if reasoning:
+                        yield _sse("reasoning", {"text": reasoning, "model": payload["model"], "provider": "openrouter"})
+                        
                     content = delta.get("content")
                     if content:
                         yield _sse("delta", {"text": content})
@@ -844,20 +1025,19 @@ def _stream_answer_from_retrieval(
 
 
 def _post_llm_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]:
-    api_key = settings.GOOGLE_API_KEY if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_API_KEY
-    api_key = api_key.strip()
-    api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" if payload.get("model") == settings.GEMINI_MODEL else "https://openrouter.ai/api/v1/chat/completions"
-    timeout = settings.GEMINI_TIMEOUT_SECONDS if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_TIMEOUT_SECONDS
+    api_key = settings.OPENROUTER_API_KEY.strip()
+    api_url = "https://openrouter.ai/api/v1/chat/completions"
+    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
 
     if not api_key:
-        raise TreeRoutingError(f"{'GOOGLE_API_KEY' if payload.get('model') == settings.GEMINI_MODEL else 'OPENROUTER_API_KEY'} is not configured.")
+        raise TreeRoutingError("OPENROUTER_API_KEY is not configured.")
 
     response = None
     last_error: Exception | None = None
 
     for attempt in range(MAX_LLM_RETRIES):
         try:
-            logger.info("[%s] %s attempt %s/%s", "GEMINI" if payload.get("model") == settings.GEMINI_MODEL else "OPENROUTER", purpose, attempt + 1, MAX_LLM_RETRIES)
+            logger.info("[OPENROUTER] %s attempt %s/%s", purpose, attempt + 1, MAX_LLM_RETRIES)
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(
                     api_url,

@@ -3,7 +3,7 @@ import { Button } from "./components/ui/button";
 import { Textarea } from "./components/ui/textarea";
 
 // Lucide icons
-import { Send, Sparkles, Loader2, Bot, User, Brain } from "lucide-react";
+import { Send, Sparkles, Loader2, Bot, User, Brain, ChevronDown } from "lucide-react";
 
 type NodeSelectionResponse = {
   question: string;
@@ -156,7 +156,10 @@ export default function App() {
 
       let streamBuffer = "";
       for await (const evt of readSse(ansRes)) {
-        if (evt.event === "delta") {
+        if (evt.event === "reasoning") {
+          fullReasoning += evt.data.text;
+          updateAssistantMessage({ reasoning: fullReasoning, stage: "Thinking..." });
+        } else if (evt.event === "delta") {
           const text = evt.data.text || "";
           streamBuffer += text;
 
@@ -256,15 +259,29 @@ export default function App() {
 
                 <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   {msg.role === "assistant" && msg.reasoning && (
-                    <div className="rounded-2xl rounded-tl-sm bg-white/5 border border-white/10 p-4 text-sm text-muted-foreground w-full">
-                      <div className="flex items-center gap-2 mb-2 font-medium text-white/70">
-                        {msg.isGenerating && msg.stage === "Thinking..." ? <Loader2 className="h-3 w-3 animate-spin" /> : <Brain className="h-3 w-3" />}
-                        Thinking Process
+                    <details 
+                      className="group rounded-2xl rounded-tl-sm bg-white/5 border border-white/10 text-sm text-muted-foreground w-full overflow-hidden [&_summary::-webkit-details-marker]:hidden"
+                      open={msg.isGenerating ? true : undefined}
+                    >
+                      <summary className="flex cursor-pointer items-center justify-between p-3 font-medium text-white/70 hover:bg-white/5 transition-colors select-none">
+                        <div className="flex items-center gap-3">
+                          {msg.isGenerating ? (
+                            <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                          ) : (
+                            <Brain className="h-4 w-4 text-gray-400" />
+                          )}
+                          <span className="text-[14px]">
+                            {msg.isGenerating ? "Thinking..." : "Thought Process"}
+                          </span>
+                        </div>
+                        <ChevronDown className="h-4 w-4 opacity-50 transition-transform duration-300 group-open:-rotate-180" />
+                      </summary>
+                      <div className="px-4 pb-4 pt-1 whitespace-pre-wrap leading-relaxed opacity-80 border-t border-white/5">
+                        <div className="border-l-[3px] border-white/10 pl-4 py-2 mt-2 italic text-[14px] text-gray-300">
+                          {msg.reasoning}
+                        </div>
                       </div>
-                      <div className="whitespace-pre-wrap leading-relaxed opacity-80 border-l border-white/10 pl-3 italic">
-                        {msg.reasoning}
-                      </div>
-                    </div>
+                    </details>
                   )}
 
                   {msg.content && (
