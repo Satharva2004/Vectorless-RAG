@@ -64,7 +64,7 @@ def select_relevant_chapters(
             chapter["summary"][:220],
         )
 
-    final_selection = _request_groq_selection(
+    final_selection = _request_node_selection(
         question=question,
         chapters=shortlisted,
         max_chapters=max_chapters,
@@ -156,7 +156,7 @@ def select_nodes_stream_from_tree(
             },
         )
 
-    final_selection = _request_groq_selection(
+    final_selection = _request_node_selection(
         question=question,
         chapters=shortlisted,
         max_chapters=max_nodes,
@@ -286,8 +286,8 @@ def answer_question_from_tree(
         "answer": answer,
         "selected_node_ids": [node["node_id"] for node in retrieval_result["retrieved_nodes"]],
         "citations": citations,
-        "model": settings.GROQ_MODEL,
-        "provider": "groq",
+        "model": settings.GEMINI_MODEL,
+        "provider": "gemini",
         "reasoning": None,
     }
 
@@ -349,8 +349,8 @@ def generate_answer_from_node_ids(
         "answer": answer,
         "selected_node_ids": [chapter["node_id"] for chapter in chapter_contexts],
         "citations": citations,
-        "model": settings.GROQ_MODEL,
-        "provider": "groq",
+        "model": settings.GEMINI_MODEL,
+        "provider": "gemini",
     }
 
 
@@ -385,8 +385,8 @@ def generate_answer_stream_from_node_ids(
         {
             "selected_node_ids": [chapter["node_id"] for chapter in chapter_contexts],
             "citations": citations,
-            "model": settings.GROQ_MODEL,
-            "provider": "groq",
+            "model": settings.GEMINI_MODEL,
+            "provider": "gemini",
         },
     )
 
@@ -524,28 +524,6 @@ def _prefilter_chapters(question: str, chapters: list[dict[str, Any]]) -> list[d
     return chapters[:MAX_PREFILTER_CHAPTERS]
 
 
-def _best_relevant_snippet(question: str, full_text: str) -> str:
-    text = re.sub(r"\s+", " ", full_text).strip()
-    if len(text) <= MAX_SNIPPET_CHARS:
-        return text
-
-    query_terms = [term for term in re.findall(r"[a-zA-Z]{3,}", question.lower())]
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    scored: list[tuple[int, str]] = []
-    for sentence in sentences:
-        lowered = sentence.lower()
-        score = sum(1 for term in query_terms if term in lowered)
-        if score > 0:
-            scored.append((score, sentence.strip()))
-
-    if scored:
-        scored.sort(key=lambda item: item[0], reverse=True)
-        snippet = " ".join(sentence for _, sentence in scored[:3]).strip()
-        return snippet[:MAX_SNIPPET_CHARS]
-
-    return text[:MAX_SNIPPET_CHARS]
-
-
 def _shortlist_chapters(
     question: str,
     chapters: list[dict[str, Any]],
@@ -561,7 +539,7 @@ def _shortlist_chapters(
 
     for batch in batches:
         logger.info("[ROUTE] Sending shortlist batch with %s chapter(s)", len(batch))
-        batch_result = _request_groq_selection(
+        batch_result = _request_node_selection(
             question=question,
             chapters=batch,
             max_chapters=shortlist_target,
@@ -606,8 +584,7 @@ def _chunk_chapters(chapters: list[dict[str, Any]]) -> list[list[dict[str, Any]]
 
     return batches
 
-
-def _request_groq_selection(
+def _request_node_selection(
     question: str,
     chapters: list[dict[str, Any]],
     max_chapters: int,
@@ -616,36 +593,57 @@ def _request_groq_selection(
     if not api_key:
         raise TreeRoutingError("OPENROUTER_API_KEY is not configured.")
 
-    system_prompt = (
-        "You are a routing model for a vectorless RAG system. "
-        "Given a user question and chapter summaries, choose the chapters most likely "
-        "to contain the answer. Return only valid JSON with keys "
-        "`node_ids` and `reasoning`. `node_ids` must contain only IDs from the provided chapters."
-    )
-    user_prompt = (
-        f"Question: {question}\n"
-        f"Maximum chapters to return: {max_chapters}\n"
-        "Chapter summaries:\n"
-        + "\n".join(_chapter_line(chapter) for chapter in chapters)
-    )
+    # Prepare the tree structure for the prompt
+    # Each node contains a node id, node title, and a corresponding summary.
+    tree_without_text = [
+        {
+            "node_id": chapter["node_id"],
+            "node_title": chapter["title"],
+            "summary": chapter["summary"],
+        }
+        for chapter in chapters
+    ]
+
+    user_prompt = f"""
+You are given a question and a tree structure of a document.
+Each node contains a node id, node title, and a corresponding summary.
+Your task is to find all nodes that are likely to contain the answer to the question.
+
+Question: {question}
+
+Document tree structure:
+{json.dumps(tree_without_text, indent=2)}
+
+Please reply in the following JSON format:
+{{
+    "thinking": "<Your thinking process on which nodes are relevant to the question>",
+    "node_list": ["node_id_1", "node_id_2", ..., "node_id_n"]
+}}
+Directly return the final JSON structure. Do not output anything else.
+"""
+
     payload = {
         "model": settings.OPENROUTER_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     }
 
     logger.info(
-        "[GROQ] Routing request: chapters=%s max_chapters=%s",
+        "[OPENROUTER] Node selection request: candidates=%s max_chapters=%s",
         len(chapters),
         max_chapters,
     )
-    message = _post_groq_messages(payload, purpose="node selection")
+    message = _post_llm_messages(payload, purpose="node selection")
     content = message.get("content", "") or ""
     parsed = _parse_model_json(content)
+
+    # Extract node_list and thinking from the new format
+    node_list = parsed.get("node_list", [])
+    thinking = parsed.get("thinking", parsed.get("reasoning", ""))
+
     valid_ids = {chapter["node_id"] for chapter in chapters}
-    node_ids = [node_id for node_id in parsed.get("node_ids", []) if node_id in valid_ids]
+    node_ids = [node_id for node_id in node_list if node_id in valid_ids]
     node_ids = node_ids[:max_chapters]
 
     if not node_ids:
@@ -653,7 +651,7 @@ def _request_groq_selection(
 
     return {
         "node_ids": node_ids,
-        "reasoning": parsed.get("reasoning"),
+        "reasoning": thinking,
         "assistant_content": message.get("content"),
         "reasoning_details": message.get("reasoning_details"),
     }
@@ -689,13 +687,17 @@ def _generate_grounded_answer_from_retrieval(
     system_prompt = (
         "You answer questions only from the provided raw text. "
         "Do not use outside knowledge. "
-        "If the answer is not supported by the provided text, say that clearly. "
         "Do NOT cite chapters or use inline citations. Just tell the answer directly looking at the raw text."
     )
     user_prompt = (
-        f"Question: {question}\n\n"
-        "Use only the following raw text to formulate your answer:\n\n"
-        + "\n\n".join(context_blocks)
+        f"""
+        Answer the question based on the context:
+
+        Question: {question}
+        Context: {context_blocks}
+
+        Provide a clear, concise answer based only on the context provided.
+        """
     )
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
@@ -720,12 +722,12 @@ def _generate_grounded_answer_from_retrieval(
         messages.append({"role": "user", "content": user_prompt})
 
     payload = {
-        "model": settings.GROQ_MODEL,
+        "model": settings.GEMINI_MODEL,
         "messages": messages,
     }
 
-    message = _post_groq_messages(payload, purpose="answer generation")
-    logger.info("[ANSWER] Final answer received from Groq")
+    message = _post_llm_messages(payload, purpose="answer generation")
+    logger.info("[ANSWER] Final answer received from Gemini")
     return (message.get("content") or "").strip()
 
 
@@ -753,13 +755,17 @@ def _stream_answer_from_retrieval(
     system_prompt = (
         "You answer questions only from the provided raw text. "
         "Do not use outside knowledge. "
-        "If the answer is not supported by the provided text, say that clearly. "
         "Do NOT cite chapters or use inline citations. Just tell the answer directly looking at the raw text."
     )
     user_prompt = (
-        f"Question: {question}\n\n"
-        "Use only the following raw text to formulate your answer:\n\n"
-        + "\n\n".join(context_blocks)
+        f"""
+        Answer the question based on the context:
+
+        Question: {question}
+        Context: {context_blocks}
+
+        Provide a clear, concise answer based only on the context provided.
+        """
     )
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
@@ -784,21 +790,21 @@ def _stream_answer_from_retrieval(
         messages.append({"role": "user", "content": user_prompt})
 
     payload = {
-        "model": settings.GROQ_MODEL,
+        "model": settings.GEMINI_MODEL,
         "messages": messages,
         "stream": True,
     }
 
-    api_key = settings.GROQ_API_KEY if payload.get("model") == settings.GROQ_MODEL else settings.OPENROUTER_API_KEY
+    api_key = settings.GOOGLE_API_KEY if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_API_KEY
     api_key = api_key.strip()
-    api_url = "https://api.groq.com/openai/v1/chat/completions" if payload.get("model") == settings.GROQ_MODEL else "https://openrouter.ai/api/v1/chat/completions"
-    timeout = settings.GROQ_TIMEOUT_SECONDS if payload.get("model") == settings.GROQ_MODEL else settings.OPENROUTER_TIMEOUT_SECONDS
+    api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" if payload.get("model") == settings.GEMINI_MODEL else "https://openrouter.ai/api/v1/chat/completions"
+    timeout = settings.GEMINI_TIMEOUT_SECONDS if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_TIMEOUT_SECONDS
 
     if not api_key:
-        yield _sse("error", {"message": f"{'GROQ_API_KEY' if payload.get('model') == settings.GROQ_MODEL else 'OPENROUTER_API_KEY'} is not configured."})
+        yield _sse("error", {"message": f"{'GOOGLE_API_KEY' if payload.get('model') == settings.GEMINI_MODEL else 'OPENROUTER_API_KEY'} is not configured."})
         return
 
-    logger.info("[%s] Starting streamed answer request", "GROQ" if payload.get("model") == settings.GROQ_MODEL else "OPENROUTER")
+    logger.info("[%s] Starting streamed answer request", "GEMINI" if payload.get("model") == settings.GEMINI_MODEL else "OPENROUTER")
     yield _sse("log", {"stage": "answer", "message": "llm_stream_start"})
 
     try:
@@ -837,21 +843,21 @@ def _stream_answer_from_retrieval(
     yield _sse("done", {"message": "complete"})
 
 
-def _post_groq_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]:
-    api_key = settings.GROQ_API_KEY if payload.get("model") == settings.GROQ_MODEL else settings.OPENROUTER_API_KEY
+def _post_llm_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]:
+    api_key = settings.GOOGLE_API_KEY if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_API_KEY
     api_key = api_key.strip()
-    api_url = "https://api.groq.com/openai/v1/chat/completions" if payload.get("model") == settings.GROQ_MODEL else "https://openrouter.ai/api/v1/chat/completions"
-    timeout = settings.GROQ_TIMEOUT_SECONDS if payload.get("model") == settings.GROQ_MODEL else settings.OPENROUTER_TIMEOUT_SECONDS
+    api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" if payload.get("model") == settings.GEMINI_MODEL else "https://openrouter.ai/api/v1/chat/completions"
+    timeout = settings.GEMINI_TIMEOUT_SECONDS if payload.get("model") == settings.GEMINI_MODEL else settings.OPENROUTER_TIMEOUT_SECONDS
 
     if not api_key:
-        raise TreeRoutingError(f"{'GROQ_API_KEY' if payload.get('model') == settings.GROQ_MODEL else 'OPENROUTER_API_KEY'} is not configured.")
+        raise TreeRoutingError(f"{'GOOGLE_API_KEY' if payload.get('model') == settings.GEMINI_MODEL else 'OPENROUTER_API_KEY'} is not configured.")
 
     response = None
     last_error: Exception | None = None
 
     for attempt in range(MAX_LLM_RETRIES):
         try:
-            logger.info("[%s] %s attempt %s/%s", "GROQ" if payload.get("model") == settings.GROQ_MODEL else "OPENROUTER", purpose, attempt + 1, MAX_LLM_RETRIES)
+            logger.info("[%s] %s attempt %s/%s", "GEMINI" if payload.get("model") == settings.GEMINI_MODEL else "OPENROUTER", purpose, attempt + 1, MAX_LLM_RETRIES)
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(
                     api_url,
@@ -868,7 +874,7 @@ def _post_groq_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]
             if exc.response.status_code == 429 and attempt < MAX_LLM_RETRIES - 1:
                 wait_seconds = _extract_retry_delay_seconds(exc.response.text)
                 logger.warning(
-                    "[RETRY] Groq rate limited during %s. Waiting %ss",
+                    "[RETRY] API rate limited during %s. Waiting %ss",
                     purpose,
                     wait_seconds,
                 )

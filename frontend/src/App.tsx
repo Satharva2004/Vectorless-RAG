@@ -114,7 +114,7 @@ export default function App() {
     let isThinkingMode = false;
 
     try {
-      const selRes = await fetch("/api/v1/chat/select-nodes/stream", {
+      const selRes = await fetch(`${import.meta.env.VITE_BACKEND_HOSTED}/api/v1/chat/select-nodes/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -140,7 +140,7 @@ export default function App() {
 
       if (!selected) throw new Error("Processing failed.");
 
-      const ansRes = await fetch("/api/v1/chat/generate-answer/stream", {
+      const ansRes = await fetch(`${import.meta.env.VITE_BACKEND_HOSTED}/api/v1/chat/generate-answer/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -164,7 +164,7 @@ export default function App() {
           while (streamBuffer.includes("<think>")) {
             const startIdx = streamBuffer.indexOf("<think>");
             let endIdx = streamBuffer.indexOf("</think>");
-            
+
             if (endIdx !== -1) {
               const th = streamBuffer.slice(startIdx + 7, endIdx);
               fullReasoning += th;
@@ -181,27 +181,27 @@ export default function App() {
           }
 
           if (isThinkingMode) {
-             let endIdx = text.indexOf("</think>");
-             if (endIdx !== -1) {
-                isThinkingMode = false;
-                // Text after </think> goes to answer
-                const rText = text.slice(0, endIdx);
-                fullReasoning += rText;
-                
-                const ansText = text.slice(endIdx + 8);
-                fullAnswer += ansText;
-                updateAssistantMessage({ reasoning: fullReasoning, content: fullAnswer, stage: "" });
-             } else {
-                fullReasoning += text;
-                updateAssistantMessage({ reasoning: fullReasoning, stage: "Thinking..." });
-             }
+            let endIdx = text.indexOf("</think>");
+            if (endIdx !== -1) {
+              isThinkingMode = false;
+              // Text after </think> goes to answer
+              const rText = text.slice(0, endIdx);
+              fullReasoning += rText;
+
+              const ansText = text.slice(endIdx + 8);
+              fullAnswer += ansText;
+              updateAssistantMessage({ reasoning: fullReasoning, content: fullAnswer, stage: "" });
+            } else {
+              fullReasoning += text;
+              updateAssistantMessage({ reasoning: fullReasoning, stage: "Thinking..." });
+            }
           } else if (!streamBuffer.includes("<think>")) {
-             fullAnswer += text;
-             updateAssistantMessage({ content: fullAnswer, stage: "" });
+            fullAnswer += text;
+            updateAssistantMessage({ content: fullAnswer, stage: "" });
           }
         }
       }
-      
+
       updateAssistantMessage({ isGenerating: false, stage: "" });
 
     } catch (err: any) {
@@ -229,31 +229,31 @@ export default function App() {
         </div>
       </header>
 
-      <main 
+      <main
         className="flex-1 overflow-y-auto px-4 py-8 custom-scrollbar"
         ref={scrollRef}
       >
         <div className="mx-auto max-w-3xl space-y-8">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-[50vh] text-center space-y-6 animate-in fade-in zoom-in duration-700">
-             <div className="h-20 w-20 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.2)]">
-               <Bot className="h-10 w-10 text-blue-400" />
-             </div>
-             <div className="space-y-2">
-               <h2 className="text-3xl font-bold bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">How can I help you today?</h2>
-               <p className="text-muted-foreground max-w-md mx-auto">Ask me anything about Harry Potter and the Sorcerer's Stone.</p>
-             </div>
+              <div className="h-20 w-20 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.2)]">
+                <Bot className="h-10 w-10 text-blue-400" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-3xl font-bold bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">How can I help you today?</h2>
+                <p className="text-muted-foreground max-w-md mx-auto">Ask me anything about Harry Potter and the Sorcerer's Stone.</p>
+              </div>
             </div>
           ) : (
             messages.map((msg) => (
-              <div 
-                key={msg.id} 
+              <div
+                key={msg.id}
                 className={`flex gap-4 animate-in slide-in-from-bottom-4 fade-in duration-500 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
               >
                 <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm ${msg.role === "user" ? "bg-blue-600 border-blue-500 text-white" : "bg-panel2/80 border-white/10 text-blue-400"}`}>
                   {msg.role === "user" ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
                 </div>
-                
+
                 <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   {msg.role === "assistant" && msg.reasoning && (
                     <div className="rounded-2xl rounded-tl-sm bg-white/5 border border-white/10 p-4 text-sm text-muted-foreground w-full">
@@ -268,12 +268,11 @@ export default function App() {
                   )}
 
                   {msg.content && (
-                    <div 
-                      className={`rounded-2xl p-4 text-[15px] leading-relaxed relative group ${
-                        msg.role === "user" 
-                          ? "bg-blue-600 text-white rounded-tr-sm shadow-[0_0_20px_rgba(37,99,235,0.15)]" 
-                          : "bg-panel2/40 border border-white/5 text-white/90 rounded-tl-sm shadow-sm"
-                      }`}
+                    <div
+                      className={`rounded-2xl p-4 text-[15px] leading-relaxed relative group ${msg.role === "user"
+                        ? "bg-blue-600 text-white rounded-tr-sm shadow-[0_0_20px_rgba(37,99,235,0.15)]"
+                        : "bg-panel2/40 border border-white/5 text-white/90 rounded-tl-sm shadow-sm"
+                        }`}
                     >
                       <div className="whitespace-pre-wrap">{msg.content}</div>
                     </div>
@@ -281,8 +280,8 @@ export default function App() {
 
                   {msg.isGenerating && msg.stage && !msg.content && !msg.reasoning && (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground py-2 px-1">
-                       <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-                       <span className="animate-pulse">{msg.stage}</span>
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                      <span className="animate-pulse">{msg.stage}</span>
                     </div>
                   )}
                 </div>
@@ -304,20 +303,20 @@ export default function App() {
             disabled={busy}
           />
           <div className="absolute bottom-3 right-3 flex items-center justify-center">
-             <Button
-               onClick={onAsk}
-               disabled={!inputValue.trim() || busy}
-               className={`h-9 w-9 rounded-full transition-all duration-300 shadow-md p-0 ${inputValue.trim() && !busy ? "bg-blue-600 hover:bg-blue-500 text-white" : "bg-white/5 text-white/30 hover:bg-white/5"}`}
-             >
-               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-             </Button>
+            <Button
+              onClick={onAsk}
+              disabled={!inputValue.trim() || busy}
+              className={`h-9 w-9 rounded-full transition-all duration-300 shadow-md p-0 ${inputValue.trim() && !busy ? "bg-blue-600 hover:bg-blue-500 text-white" : "bg-white/5 text-white/30 hover:bg-white/5"}`}
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </Button>
           </div>
         </div>
         <div className="text-center mt-3 text-xs text-muted-foreground opacity-70">
           Vectorless RAG · Uses OpenRouter with Grok
         </div>
       </div>
-      
+
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
           width: 6px;
