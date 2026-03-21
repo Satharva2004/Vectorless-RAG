@@ -1,0 +1,12 @@
+fastapi
+pydantic-settings
+uvicorn
+python-multipart
+python-dotenv
+httpx
+pydantic
+pdfplumber
+pymupdf
+# Optional, remove if not using anymore
+groq
+google-generativeai
