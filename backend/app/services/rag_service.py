@@ -479,16 +479,7 @@ def _shortlist_chapters(
 
 
 def _chapter_line(chapter: dict[str, Any]) -> str:
-    return json.dumps(
-        {
-            "node_id": chapter["node_id"],
-            "title": chapter["title"],
-            "page_start": chapter["page_start"],
-            "page_end": chapter["page_end"],
-            "summary": chapter["summary"],
-        },
-        ensure_ascii=True,
-    )
+    return f"{chapter.get('title', '')} {chapter.get('summary', '')}"
 
 
 def _chunk_chapters(chapters: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -519,9 +510,9 @@ def _stream_request_node_selection(
     chapters: list[dict[str, Any]],
     max_chapters: int,
 ):
-    api_key = settings.DEEPSEEK_API_KEY.strip()
+    api_key = settings.OPENROUTER_API_KEY.strip()
     if not api_key:
-        yield {"type": "error", "message": "DEEPSEEK_API_KEY is not configured."}
+        yield {"type": "error", "message": "OPENROUTER_API_KEY is not configured."}
         return
 
     tree_without_text = [
@@ -552,20 +543,26 @@ Do not output anything else but your reasoning block and the JSON block.
 """
 
     payload = {
-        "model": settings.DEEPSEEK_MODEL,
+        "model": settings.OPENROUTER_MODEL,
         "messages": [
             {"role": "user", "content": user_prompt.strip()},
         ],
         "stream": True,
+        "include_reasoning": True,
+        "extra_body": {
+            "reasoning": {
+                "enabled": True
+            }
+        }
     }
 
     logger.info(
-        "[DEEPSEEK] Streaming node selection request: candidates=%s",
+        "[FEATHERLESS] Streaming node selection request: candidates=%s",
         len(chapters),
     )
-
-    api_url = f"{settings.DEEPSEEK_BASE_URL}/chat/completions"
-    timeout = settings.DEEPSEEK_TIMEOUT_SECONDS
+    
+    api_url = "https://api.featherless.ai/v1/chat/completions"
+    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
     
     content_buffer = ""
     json_buffer = ""
@@ -600,8 +597,7 @@ Do not output anything else but your reasoning block and the JSON block.
                     choice = (event.get("choices") or [{}])[0]
                     delta = choice.get("delta") or {}
                     
-                    # DeepSeek reasoner: reasoning tokens come in reasoning_content
-                    reasoning_chunk = delta.get("reasoning_content")
+                    reasoning_chunk = delta.get("reasoning")
                     if reasoning_chunk:
                         yield {"type": "reasoning", "text": reasoning_chunk}
                         
@@ -637,7 +633,7 @@ Do not output anything else but your reasoning block and the JSON block.
                                 content_buffer = ""
 
     except Exception as exc:
-        logger.exception("[DEEPSEEK] Streamed node selection request failed")
+        logger.exception("[OPENROUTER] Streamed node selection request failed")
         yield {"type": "error", "message": f"Selection stream failed: {exc}"}
         return
 
@@ -726,20 +722,26 @@ def _stream_answer_from_retrieval(
         messages.append({"role": "user", "content": user_prompt})
 
     payload = {
-        "model": settings.DEEPSEEK_MODEL,
+        "model": settings.OPENROUTER_MODEL,
         "messages": messages,
         "stream": True,
+        "include_reasoning": True,
+        "extra_body": {
+            "reasoning": {
+                "enabled": True
+            }
+        }
     }
 
-    api_key = settings.DEEPSEEK_API_KEY.strip()
-    api_url = f"{settings.DEEPSEEK_BASE_URL}/chat/completions"
-    timeout = settings.DEEPSEEK_TIMEOUT_SECONDS
+    api_key = settings.OPENROUTER_API_KEY.strip()
+    api_url = "https://api.featherless.ai/v1/chat/completions"
+    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
 
     if not api_key:
-        yield _sse("error", {"message": "DEEPSEEK_API_KEY is not configured."})
+        yield _sse("error", {"message": "OPENROUTER_API_KEY is not configured."})
         return
 
-    logger.info("[DEEPSEEK] Starting streamed answer request with %s", settings.DEEPSEEK_MODEL)
+    logger.info("[OPENROUTER] Starting streamed answer request with %s", settings.OPENROUTER_MODEL)
     yield _sse("log", {"stage": "answer", "message": "llm_stream_start"})
 
     try:
@@ -768,16 +770,15 @@ def _stream_answer_from_retrieval(
                     choice = (event.get("choices") or [{}])[0]
                     delta = choice.get("delta") or {}
                     
-                    # DeepSeek reasoner: reasoning tokens come in reasoning_content
-                    reasoning = delta.get("reasoning_content")
+                    reasoning = delta.get("reasoning")
                     if reasoning:
-                        yield _sse("reasoning", {"text": reasoning, "model": payload["model"], "provider": "deepseek"})
+                        yield _sse("reasoning", {"text": reasoning, "model": payload["model"], "provider": "openrouter"})
                         
                     content = delta.get("content")
                     if content:
                         yield _sse("delta", {"text": content})
     except httpx.HTTPError as exc:
-        logger.exception("[DEEPSEEK] Streamed answer request failed")
+        logger.exception("[OPENROUTER] Streamed answer request failed")
         yield _sse("error", {"message": f"Answer stream failed: {exc}"})
         return
 
@@ -785,19 +786,19 @@ def _stream_answer_from_retrieval(
 
 
 def _post_llm_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]:
-    api_key = settings.DEEPSEEK_API_KEY.strip()
-    api_url = f"{settings.DEEPSEEK_BASE_URL}/chat/completions"
-    timeout = settings.DEEPSEEK_TIMEOUT_SECONDS
+    api_key = settings.OPENROUTER_API_KEY.strip()
+    api_url = "https://api.featherless.ai/v1/chat/completions"
+    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
 
     if not api_key:
-        raise TreeRoutingError("DEEPSEEK_API_KEY is not configured.")
+        raise TreeRoutingError("OPENROUTER_API_KEY is not configured.")
 
     response = None
     last_error: Exception | None = None
 
     for attempt in range(MAX_LLM_RETRIES):
         try:
-            logger.info("[DEEPSEEK] %s attempt %s/%s", purpose, attempt + 1, MAX_LLM_RETRIES)
+            logger.info("[OPENROUTER] %s attempt %s/%s", purpose, attempt + 1, MAX_LLM_RETRIES)
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(
                     api_url,
@@ -821,19 +822,19 @@ def _post_llm_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]:
                 time.sleep(wait_seconds)
                 continue
             raise TreeRoutingError(
-                f"DeepSeek request failed during {purpose}: {exc}. Response: {exc.response.text}"
+                f"OpenRouter request failed during {purpose}: {exc}. Response: {exc.response.text}"
             ) from exc
         except httpx.HTTPError as exc:
             last_error = exc
             if attempt < MAX_LLM_RETRIES - 1:
-                logger.warning("[RETRY] DeepSeek HTTP error during %s. Waiting 2s", purpose)
+                logger.warning("[RETRY] OpenRouter HTTP error during %s. Waiting 2s", purpose)
                 time.sleep(2)
                 continue
-            raise TreeRoutingError(f"DeepSeek request failed during {purpose}: {exc}") from exc
+            raise TreeRoutingError(f"OpenRouter request failed during {purpose}: {exc}") from exc
 
     if response is None:
         raise TreeRoutingError(
-            f"DeepSeek request failed during {purpose} after retries: {last_error}"
+            f"OpenRouter request failed during {purpose} after retries: {last_error}"
         )
 
     try:

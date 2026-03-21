@@ -1,4 +1,6 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Send,
   Sparkles,
@@ -8,6 +10,35 @@ import {
   BrainCircuit,
   Database,
 } from "lucide-react";
+
+// ─── Components ───────────────────────────────────────────────────────────────
+
+function AutoScrollReasoning({ text, isGenerating }: { text: string; isGenerating?: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isGenerating && containerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
+      // Scroll to bottom only if the user hasn't manually scrolled up
+      // Or if the content is just beginning to stream and is very small
+      if (isNearBottom || scrollHeight <= clientHeight + 50) {
+        containerRef.current.scrollTop = scrollHeight;
+      }
+    }
+  }, [text, isGenerating]);
+
+  return (
+    <div 
+      ref={containerRef}
+      className="mt-3 text-[13px] text-gray-500 bg-white border border-[#eef2f5] rounded-2xl p-5 shadow-sm max-h-[300px] overflow-y-auto custom-scrollbar leading-[1.6]"
+    >
+      <div className="prose prose-sm prose-slate max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+    </div>
+  );
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -87,10 +118,14 @@ export default function App() {
   const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
+  const scrollToBottom = (force = false) => {
     setTimeout(() => {
       if (scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+        const isNearBottom = scrollHeight - scrollTop - clientHeight < 150;
+        if (force || isNearBottom) {
+          scrollRef.current.scrollTop = scrollHeight;
+        }
       }
     }, 50);
   };
@@ -125,7 +160,7 @@ export default function App() {
       { id: userMsgId, role: "user", content: q },
       { id: assistantMsgId, role: "assistant", content: "", reasoning: "", isGenerating: true, stage: "Routing query..." },
     ]);
-    scrollToBottom();
+    scrollToBottom(true);
 
     let fullAnswer = "";
     let fullReasoning = "";
@@ -196,8 +231,13 @@ export default function App() {
       });
     } catch (err: any) {
       console.error(err);
+      
+      const humanError = fullAnswer 
+        ? fullAnswer + `\n\n*Uh oh, the connection dropped! It looks like many users are using the model right now. Please try again in a few minutes.*`
+        : `*Uh oh! It looks like many users are using the model right now. Please try again in 5 minutes!*`;
+        
       updateAssistantMessage(assistantMsgId, {
-        content: fullAnswer + `\n\n[Error: ${err.message}]`,
+        content: humanError,
         isGenerating: false,
         stage: "",
       });
@@ -263,8 +303,12 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="flex gap-4">
-                        <div className="shrink-0 w-[36px] h-[36px] rounded-full bg-[#f4f7fa] flex items-center justify-center border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] mt-1">
-                          <Sparkles className="w-[16px] h-[16px] text-gray-600" />
+                        <div className="shrink-0 w-[42px] h-[42px] rounded-full bg-[#f4f7fa] flex items-center justify-center border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] mt-1 overflow-hidden">
+                          <img 
+                            src="https://i.pinimg.com/736x/68/8b/d2/688bd2e2fba6756a496640c10465a28e.jpg" 
+                            alt="Assistant Avatar" 
+                            className="w-full h-full object-cover rounded-full"
+                          />
                         </div>
 
                         <div className="flex-1 min-w-0 space-y-2.5 pt-1.5">
@@ -283,9 +327,7 @@ export default function App() {
                                 )}
                               </button>
                               {(msg.isGenerating || expandedReasoning[msg.id]) && (
-                                <div className="mt-3 text-[13px] text-gray-500 bg-white border border-[#eef2f5] rounded-2xl p-5 shadow-sm max-h-[300px] overflow-y-auto custom-scrollbar leading-[1.6]">
-                                  {msg.reasoning}
-                                </div>
+                                <AutoScrollReasoning text={msg.reasoning} isGenerating={msg.isGenerating} />
                               )}
                             </div>
                           )}
@@ -303,13 +345,8 @@ export default function App() {
 
                           {/* Message Content */}
                           {msg.content && (
-                            <div className={`text-[15px] text-gray-900 font-medium leading-[1.7] ${msg.isGenerating ? "cursor-blink" : ""}`}>
-                              {msg.content.split('\n').map((line, i) => (
-                                <span key={i}>
-                                  {line}
-                                  {i !== msg.content.split('\n').length - 1 && <br />}
-                                </span>
-                              ))}
+                            <div className={`text-[15px] text-gray-900 font-medium leading-[1.7] prose prose-slate max-w-none ${msg.isGenerating ? "cursor-blink" : ""}`}>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                             </div>
                           )}
                         </div>

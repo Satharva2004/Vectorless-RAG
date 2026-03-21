@@ -10,17 +10,16 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
 
-    # Google / Gemini (kept for future use)
+    # API Keys
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_TIMEOUT_SECONDS: int = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-r1")
+    OPENROUTER_TIMEOUT_SECONDS: int = int(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "60"))
 
-    # DeepSeek Official API
-    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner")
-    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    DEEPSEEK_TIMEOUT_SECONDS: int = int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "120"))
 
-    # File paths
+    # File Upload Settings
     UPLOAD_DIR: str = os.path.join(os.getcwd(), "data", "uploads")
     DEFAULT_TREE_PATH: str = os.getenv("DEFAULT_TREE_PATH", "data/hp1_pageindex_tree.json")
     DEFAULT_BOOK_PDF: str = os.getenv(
