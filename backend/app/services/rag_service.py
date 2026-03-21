@@ -2,7 +2,6 @@ import json
 import logging
 import re
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -208,88 +207,6 @@ def load_tree_from_path(tree_path: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def retrieve_from_tree(
-    query: str,
-    tree: dict[str, Any],
-    max_chapters: int = 3,
-) -> dict[str, Any]:
-    route_result = select_relevant_chapters(question=query, tree=tree, max_chapters=max_chapters)
-    chapter_contexts = fetch_chapter_contexts(tree, route_result["selected_node_ids"])
-    retrieved_nodes = []
-
-    for chapter in chapter_contexts:
-        retrieved_nodes.append(
-            {
-                "title": chapter["title"],
-                "node_id": chapter["node_id"],
-                "relevant_contents": [
-                    {
-                        "page_index": chapter["page_start"],
-                        "relevant_content": chapter["full_text"],
-                    }
-                ],
-            }
-        )
-
-    logger.info("[RETRIEVAL] Returning %s retrieved node(s)", len(retrieved_nodes))
-    return {
-        "retrieval_id": f"local-{uuid.uuid4().hex[:12]}",
-        "status": "completed",
-        "query": query,
-        "retrieved_nodes": retrieved_nodes,
-        "model": settings.OPENROUTER_MODEL,
-        "provider": "openrouter",
-    }
-
-
-def answer_question_from_tree(
-    question: str,
-    tree: dict[str, Any],
-    max_chapters: int = 3,
-) -> dict[str, Any]:
-    logger.info("[ANSWER] Starting end-to-end answer flow")
-    retrieval_result = retrieve_from_tree(query=question, tree=tree, max_chapters=max_chapters)
-    chapter_contexts = fetch_chapter_contexts(
-        tree,
-        [node["node_id"] for node in retrieval_result["retrieved_nodes"]],
-    )
-    if not chapter_contexts:
-        raise TreeRoutingError("Could not fetch full text for selected chapter node_ids.")
-
-    logger.info("[FETCH] Loaded %s full chapter context(s)", len(chapter_contexts))
-    for chapter in chapter_contexts:
-        logger.info(
-            "[FETCH] %s | %s | pages %s-%s | chars=%s",
-            chapter["node_id"],
-            chapter["title"],
-            chapter["page_start"],
-            chapter["page_end"],
-            len(chapter["full_text"]),
-        )
-
-    answer = _generate_grounded_answer_from_retrieval(
-        question=question,
-        retrieved_nodes=retrieval_result["retrieved_nodes"],
-    )
-    citations = [
-        {
-            "node_id": chapter["node_id"],
-            "title": chapter["title"],
-            "page_start": chapter["page_start"],
-            "page_end": chapter["page_end"],
-            "source": chapter.get("source"),
-        }
-        for chapter in chapter_contexts
-    ]
-    return {
-        "question": question,
-        "answer": answer,
-        "selected_node_ids": [node["node_id"] for node in retrieval_result["retrieved_nodes"]],
-        "citations": citations,
-        "model": settings.GEMINI_MODEL,
-        "provider": "gemini",
-        "reasoning": None,
-    }
 
 
 def generate_answer_from_node_ids(
@@ -561,6 +478,19 @@ def _shortlist_chapters(
     return deduped
 
 
+def _chapter_line(chapter: dict[str, Any]) -> str:
+    return json.dumps(
+        {
+            "node_id": chapter["node_id"],
+            "title": chapter["title"],
+            "page_start": chapter["page_start"],
+            "page_end": chapter["page_end"],
+            "summary": chapter["summary"],
+        },
+        ensure_ascii=True,
+    )
+
+
 def _chunk_chapters(chapters: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     batches: list[list[dict[str, Any]]] = []
     current_batch: list[dict[str, Any]] = []
@@ -589,9 +519,9 @@ def _stream_request_node_selection(
     chapters: list[dict[str, Any]],
     max_chapters: int,
 ):
-    api_key = settings.OPENROUTER_API_KEY.strip()
+    api_key = settings.DEEPSEEK_API_KEY.strip()
     if not api_key:
-        yield {"type": "error", "message": "OPENROUTER_API_KEY is not configured."}
+        yield {"type": "error", "message": "DEEPSEEK_API_KEY is not configured."}
         return
 
     tree_without_text = [
@@ -622,26 +552,20 @@ Do not output anything else but your reasoning block and the JSON block.
 """
 
     payload = {
-        "model": settings.OPENROUTER_MODEL,
+        "model": settings.DEEPSEEK_MODEL,
         "messages": [
             {"role": "user", "content": user_prompt.strip()},
         ],
         "stream": True,
-        "include_reasoning": True,
-        "extra_body": {
-            "reasoning": {
-                "enabled": True
-            }
-        }
     }
 
     logger.info(
-        "[OPENROUTER] Streaming node selection request: candidates=%s",
+        "[DEEPSEEK] Streaming node selection request: candidates=%s",
         len(chapters),
     )
-    
-    api_url = "https://openrouter.ai/api/v1/chat/completions"
-    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
+
+    api_url = f"{settings.DEEPSEEK_BASE_URL}/chat/completions"
+    timeout = settings.DEEPSEEK_TIMEOUT_SECONDS
     
     content_buffer = ""
     json_buffer = ""
@@ -676,7 +600,8 @@ Do not output anything else but your reasoning block and the JSON block.
                     choice = (event.get("choices") or [{}])[0]
                     delta = choice.get("delta") or {}
                     
-                    reasoning_chunk = delta.get("reasoning")
+                    # DeepSeek reasoner: reasoning tokens come in reasoning_content
+                    reasoning_chunk = delta.get("reasoning_content")
                     if reasoning_chunk:
                         yield {"type": "reasoning", "text": reasoning_chunk}
                         
@@ -712,7 +637,7 @@ Do not output anything else but your reasoning block and the JSON block.
                                 content_buffer = ""
 
     except Exception as exc:
-        logger.exception("[OPENROUTER] Streamed node selection request failed")
+        logger.exception("[DEEPSEEK] Streamed node selection request failed")
         yield {"type": "error", "message": f"Selection stream failed: {exc}"}
         return
 
@@ -738,166 +663,6 @@ Do not output anything else but your reasoning block and the JSON block.
         "assistant_content": full_content,
         "reasoning_details": None,
     }
-
-def _request_node_selection(
-    question: str,
-    chapters: list[dict[str, Any]],
-    max_chapters: int,
-) -> dict[str, Any]:
-    api_key = settings.OPENROUTER_API_KEY.strip()
-    if not api_key:
-        raise TreeRoutingError("OPENROUTER_API_KEY is not configured.")
-
-    # Prepare the tree structure for the prompt
-    # Each node contains a node id, node title, and a corresponding summary.
-    tree_without_text = [
-        {
-            "node_id": chapter["node_id"],
-            "node_title": chapter["title"],
-            "summary": chapter["summary"],
-        }
-        for chapter in chapters
-    ]
-
-    user_prompt = f"""
-You are given a question and a tree structure of a document.
-Each node contains a node id, node title, and a corresponding summary.
-Your task is to find all nodes that are likely to contain the answer to the question.
-
-Question: {question}
-
-Document tree structure:
-{json.dumps(tree_without_text, indent=2)}
-
-Please reply in the following JSON format:
-{{
-    "thinking": "<Your thinking process on which nodes are relevant to the question>",
-    "node_list": ["node_id_1", "node_id_2", ..., "node_id_n"]
-}}
-Directly return the final JSON structure. Do not output anything else.
-"""
-
-    payload = {
-        "model": settings.OPENROUTER_MODEL,
-        "messages": [
-            {"role": "user", "content": user_prompt},
-        ],
-        "include_reasoning": True,
-        "extra_body": {
-            "reasoning": {
-                "enabled": True
-            }
-        }
-    }
-
-    logger.info(
-        "[OPENROUTER] Node selection request: candidates=%s max_chapters=%s",
-        len(chapters),
-        max_chapters,
-    )
-    message = _post_llm_messages(payload, purpose="node selection")
-    content = message.get("content", "") or ""
-    parsed = _parse_model_json(content)
-
-    # Extract node_list and thinking from the new format
-    node_list = parsed.get("node_list", [])
-    thinking = parsed.get("thinking", parsed.get("reasoning", ""))
-
-    valid_ids = {chapter["node_id"] for chapter in chapters}
-    node_ids = [node_id for node_id in node_list if node_id in valid_ids]
-    node_ids = node_ids[:max_chapters]
-
-    if not node_ids:
-        node_ids = [chapter["node_id"] for chapter in chapters[:max_chapters]]
-
-    return {
-        "node_ids": node_ids,
-        "reasoning": thinking,
-        "assistant_content": message.get("content"),
-        "reasoning_details": message.get("reasoning_details"),
-    }
-
-
-def _generate_grounded_answer_from_retrieval(
-    question: str,
-    retrieved_nodes: list[dict[str, Any]],
-    assistant_content: str | None = None,
-    reasoning_details: Any | None = None,
-) -> str:
-    context_blocks: list[str] = []
-    total_chars = 0
-    for node in retrieved_nodes:
-        snippet_parts = []
-        for item in node.get("relevant_contents", []):
-            snippet_parts.append(f"{item['relevant_content']}")
-        chapter_block = "\n".join(snippet_parts) + "\n"
-        remaining = MAX_ANSWER_CONTEXT_CHARS - total_chars
-        if remaining <= 0:
-            break
-        if len(chapter_block) > remaining:
-            chapter_block = chapter_block[:remaining]
-        context_blocks.append(chapter_block)
-        total_chars += len(chapter_block)
-
-    logger.info(
-        "[ANSWER] Sending final answer request with %s retrieved node block(s) and %s chars",
-        len(context_blocks),
-        total_chars,
-    )
-
-    system_prompt = (
-        "You answer questions only from the provided raw text. "
-        "Do not use outside knowledge. "
-        "Do NOT cite chapters or use inline citations. Just tell the answer directly looking at the raw text.\n\n"
-        "IMPORTANT: You MUST write out your reasoning process first, explicitly enclosed within <think> and </think> tags. "
-        "After the closing </think> tag, provide your final direct answer."
-    )
-    user_prompt = (
-        f"""
-        Answer the question based on the context:
-
-        Question: {question}
-        Context: {context_blocks}
-
-        Provide a clear, concise answer based only on the context provided.
-        """
-    )
-
-    messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
-    if assistant_content is not None or reasoning_details is not None:
-        assistant_message: dict[str, Any] = {"role": "assistant", "content": assistant_content}
-        if reasoning_details is not None:
-            assistant_message["reasoning_details"] = reasoning_details
-        messages.append(assistant_message)
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "Continue from the previous reasoning and answer only from the raw text below. "
-                    "If the answer is not supported, say so clearly. "
-                    "Do NOT cite chapters or use inline citations. Just tell the answer directly.\n\n"
-                    + user_prompt
-                ),
-            }
-        )
-    else:
-        messages.insert(0, {"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": user_prompt})
-
-    payload = {
-        "model": settings.OPENROUTER_MODEL,
-        "messages": messages,
-        "include_reasoning": True,
-        "extra_body": {
-            "reasoning": {
-                "enabled": True
-            }
-        }
-    }
-
-    message = _post_llm_messages(payload, purpose="answer generation")
-    logger.info("[ANSWER] Final answer received from OpenRouter")
-    return (message.get("content") or "").strip()
 
 
 def _stream_answer_from_retrieval(
@@ -961,26 +726,20 @@ def _stream_answer_from_retrieval(
         messages.append({"role": "user", "content": user_prompt})
 
     payload = {
-        "model": settings.OPENROUTER_MODEL,
+        "model": settings.DEEPSEEK_MODEL,
         "messages": messages,
         "stream": True,
-        "include_reasoning": True,
-        "extra_body": {
-            "reasoning": {
-                "enabled": True
-            }
-        }
     }
 
-    api_key = settings.OPENROUTER_API_KEY.strip()
-    api_url = "https://openrouter.ai/api/v1/chat/completions"
-    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
+    api_key = settings.DEEPSEEK_API_KEY.strip()
+    api_url = f"{settings.DEEPSEEK_BASE_URL}/chat/completions"
+    timeout = settings.DEEPSEEK_TIMEOUT_SECONDS
 
     if not api_key:
-        yield _sse("error", {"message": "OPENROUTER_API_KEY is not configured."})
+        yield _sse("error", {"message": "DEEPSEEK_API_KEY is not configured."})
         return
 
-    logger.info("[OPENROUTER] Starting streamed answer request with %s", settings.OPENROUTER_MODEL)
+    logger.info("[DEEPSEEK] Starting streamed answer request with %s", settings.DEEPSEEK_MODEL)
     yield _sse("log", {"stage": "answer", "message": "llm_stream_start"})
 
     try:
@@ -1009,15 +768,16 @@ def _stream_answer_from_retrieval(
                     choice = (event.get("choices") or [{}])[0]
                     delta = choice.get("delta") or {}
                     
-                    reasoning = delta.get("reasoning")
+                    # DeepSeek reasoner: reasoning tokens come in reasoning_content
+                    reasoning = delta.get("reasoning_content")
                     if reasoning:
-                        yield _sse("reasoning", {"text": reasoning, "model": payload["model"], "provider": "openrouter"})
+                        yield _sse("reasoning", {"text": reasoning, "model": payload["model"], "provider": "deepseek"})
                         
                     content = delta.get("content")
                     if content:
                         yield _sse("delta", {"text": content})
     except httpx.HTTPError as exc:
-        logger.exception("[OPENROUTER] Streamed answer request failed")
+        logger.exception("[DEEPSEEK] Streamed answer request failed")
         yield _sse("error", {"message": f"Answer stream failed: {exc}"})
         return
 
@@ -1025,19 +785,19 @@ def _stream_answer_from_retrieval(
 
 
 def _post_llm_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]:
-    api_key = settings.OPENROUTER_API_KEY.strip()
-    api_url = "https://openrouter.ai/api/v1/chat/completions"
-    timeout = settings.OPENROUTER_TIMEOUT_SECONDS
+    api_key = settings.DEEPSEEK_API_KEY.strip()
+    api_url = f"{settings.DEEPSEEK_BASE_URL}/chat/completions"
+    timeout = settings.DEEPSEEK_TIMEOUT_SECONDS
 
     if not api_key:
-        raise TreeRoutingError("OPENROUTER_API_KEY is not configured.")
+        raise TreeRoutingError("DEEPSEEK_API_KEY is not configured.")
 
     response = None
     last_error: Exception | None = None
 
     for attempt in range(MAX_LLM_RETRIES):
         try:
-            logger.info("[OPENROUTER] %s attempt %s/%s", purpose, attempt + 1, MAX_LLM_RETRIES)
+            logger.info("[DEEPSEEK] %s attempt %s/%s", purpose, attempt + 1, MAX_LLM_RETRIES)
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(
                     api_url,
@@ -1061,19 +821,19 @@ def _post_llm_messages(payload: dict[str, Any], purpose: str) -> dict[str, Any]:
                 time.sleep(wait_seconds)
                 continue
             raise TreeRoutingError(
-                f"OpenRouter request failed during {purpose}: {exc}. Response: {exc.response.text}"
+                f"DeepSeek request failed during {purpose}: {exc}. Response: {exc.response.text}"
             ) from exc
         except httpx.HTTPError as exc:
             last_error = exc
             if attempt < MAX_LLM_RETRIES - 1:
-                logger.warning("[RETRY] OpenRouter HTTP error during %s. Waiting 2s", purpose)
+                logger.warning("[RETRY] DeepSeek HTTP error during %s. Waiting 2s", purpose)
                 time.sleep(2)
                 continue
-            raise TreeRoutingError(f"OpenRouter request failed during {purpose}: {exc}") from exc
+            raise TreeRoutingError(f"DeepSeek request failed during {purpose}: {exc}") from exc
 
     if response is None:
         raise TreeRoutingError(
-            f"OpenRouter request failed during {purpose} after retries: {last_error}"
+            f"DeepSeek request failed during {purpose} after retries: {last_error}"
         )
 
     try:
@@ -1096,19 +856,6 @@ def _parse_model_json(content: str) -> dict[str, Any]:
             return json.loads(content[start : end + 1])
         except json.JSONDecodeError as exc:
             raise TreeRoutingError("Model response was not valid JSON content.") from exc
-
-
-def _chapter_line(chapter: dict[str, Any]) -> str:
-    return json.dumps(
-        {
-            "node_id": chapter["node_id"],
-            "title": chapter["title"],
-            "page_start": chapter["page_start"],
-            "page_end": chapter["page_end"],
-            "summary": chapter["summary"],
-        },
-        ensure_ascii=True,
-    )
 
 
 def _extract_retry_delay_seconds(response_text: str) -> int:

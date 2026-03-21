@@ -1,15 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html,
-body {
+html, body, #root {
   height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  background: radial-gradient(1200px 700px at 20% 10%, rgba(119, 183, 255, 0.18), transparent 55%),
-    radial-gradient(900px 600px at 80% 20%, rgba(255, 90, 106, 0.12), transparent 60%),
-    linear-gradient(180deg, #07090b, #0b0d10 50%, #07090b);
-  color: #e7edf5;
+  /* Subtle and clean soft multi-color backdrop */
+  background-color: #ebf0f9;
+  background-image: 
+    radial-gradient(circle at 10% 10%, rgba(255, 255, 255, 0.6) 0%, transparent 70%),
+    radial-gradient(circle at 85% 15%, rgba(255, 230, 180, 0.6) 0%, transparent 60%),
+    radial-gradient(circle at 15% 85%, rgba(200, 215, 255, 0.6) 0%, transparent 60%),
+    radial-gradient(circle at 85% 85%, rgba(245, 220, 255, 0.6) 0%, transparent 60%);
+  color: #111827;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* Minimal translucent scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.05);
+  border-radius: 20px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Blinking cursor */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink::after {
+  content: '▋';
+  font-size: 0.85em;
+  color: #9ca3af;
+  margin-left: 2px;
+  animation: blink 1s step-end infinite;
+}
+
+/* Container drop shadow to float over the background */
+.shadow-app-container {
+  box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.08), 0 0 1px rgba(0,0,0,0.1);
+}
+
+/* Hide webkit details marker if any native detail blocks left */
+details > summary::-webkit-details-marker {
+  display: none;
 }
