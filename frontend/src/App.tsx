@@ -76,6 +76,7 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -111,7 +112,6 @@ export default function App() {
 
     let fullAnswer = "";
     let fullReasoning = "";
-    let isThinkingMode = false;
 
     try {
       const selRes = await fetch(`${import.meta.env.VITE_BACKEND_HOSTED}/api/v1/chat/select-nodes/stream`, {
@@ -154,51 +154,28 @@ export default function App() {
 
       if (!ansRes.ok) throw new Error(await ansRes.text());
 
-      let streamBuffer = "";
+      // Separate routing reasoning from answer reasoning with a divider
+      const routingReasoning = fullReasoning;
+      fullReasoning = routingReasoning
+        ? routingReasoning + "\n\n---\n\n"
+        : "";
+
       for await (const evt of readSse(ansRes)) {
         if (evt.event === "reasoning") {
+          // Native reasoning field from DeepSeek R1
           fullReasoning += evt.data.text;
           updateAssistantMessage({ reasoning: fullReasoning, stage: "Thinking..." });
         } else if (evt.event === "delta") {
           const text = evt.data.text || "";
-          streamBuffer += text;
 
-          // Simple <think> parser
-          while (streamBuffer.includes("<think>")) {
-            const startIdx = streamBuffer.indexOf("<think>");
-            let endIdx = streamBuffer.indexOf("</think>");
-
-            if (endIdx !== -1) {
-              const th = streamBuffer.slice(startIdx + 7, endIdx);
-              fullReasoning += th;
-              updateAssistantMessage({ reasoning: fullReasoning });
-              streamBuffer = streamBuffer.slice(0, startIdx) + streamBuffer.slice(endIdx + 8);
-            } else {
-              isThinkingMode = true;
-              const th = streamBuffer.slice(startIdx + 7);
-              fullReasoning += th;
-              updateAssistantMessage({ reasoning: fullReasoning, stage: "Thinking..." });
-              streamBuffer = streamBuffer.slice(0, startIdx); // Keep buffer before think
-              break;
+          // Strip any <think> tags that might appear in content stream as fallback
+          if (text.includes("<think>") || text.includes("</think>")) {
+            const stripped = text.replace(/<\/?think>/g, "");
+            if (stripped.trim()) {
+              fullAnswer += stripped;
+              updateAssistantMessage({ content: fullAnswer, stage: "" });
             }
-          }
-
-          if (isThinkingMode) {
-            let endIdx = text.indexOf("</think>");
-            if (endIdx !== -1) {
-              isThinkingMode = false;
-              // Text after </think> goes to answer
-              const rText = text.slice(0, endIdx);
-              fullReasoning += rText;
-
-              const ansText = text.slice(endIdx + 8);
-              fullAnswer += ansText;
-              updateAssistantMessage({ reasoning: fullReasoning, content: fullAnswer, stage: "" });
-            } else {
-              fullReasoning += text;
-              updateAssistantMessage({ reasoning: fullReasoning, stage: "Thinking..." });
-            }
-          } else if (!streamBuffer.includes("<think>")) {
+          } else {
             fullAnswer += text;
             updateAssistantMessage({ content: fullAnswer, stage: "" });
           }
@@ -259,29 +236,50 @@ export default function App() {
 
                 <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   {msg.role === "assistant" && msg.reasoning && (
-                    <details 
-                      className="group rounded-2xl rounded-tl-sm bg-white/5 border border-white/10 text-sm text-muted-foreground w-full overflow-hidden [&_summary::-webkit-details-marker]:hidden"
-                      open={msg.isGenerating ? true : undefined}
-                    >
-                      <summary className="flex cursor-pointer items-center justify-between p-3 font-medium text-white/70 hover:bg-white/5 transition-colors select-none">
-                        <div className="flex items-center gap-3">
-                          {msg.isGenerating ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-                          ) : (
-                            <Brain className="h-4 w-4 text-gray-400" />
+                    (() => {
+                      const isOpen = msg.isGenerating
+                        ? true
+                        : (expandedReasoning[msg.id] ?? false);
+                      return (
+                        <div className="rounded-2xl rounded-tl-sm bg-white/5 border border-white/10 text-sm text-muted-foreground w-full overflow-hidden">
+                          <button
+                            onClick={() =>
+                              !msg.isGenerating &&
+                              setExpandedReasoning((prev) => ({
+                                ...prev,
+                                [msg.id]: !prev[msg.id],
+                              }))
+                            }
+                            className="w-full flex cursor-pointer items-center justify-between p-3 font-medium text-white/70 hover:bg-white/5 transition-colors select-none text-left"
+                          >
+                            <div className="flex items-center gap-3">
+                              {msg.isGenerating ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                              ) : (
+                                <Brain className="h-4 w-4 text-gray-400" />
+                              )}
+                              <span className="text-[14px]">
+                                {msg.isGenerating ? "Thinking..." : "Thought Process"}
+                              </span>
+                            </div>
+                            {!msg.isGenerating && (
+                              <ChevronDown
+                                className={`h-4 w-4 opacity-50 transition-transform duration-300 ${
+                                  isOpen ? "-rotate-180" : ""
+                                }`}
+                              />
+                            )}
+                          </button>
+                          {isOpen && (
+                            <div className="px-4 pb-4 pt-1 whitespace-pre-wrap leading-relaxed opacity-80 border-t border-white/5">
+                              <div className="border-l-[3px] border-white/10 pl-4 py-2 mt-2 italic text-[14px] text-gray-300">
+                                {msg.reasoning}
+                              </div>
+                            </div>
                           )}
-                          <span className="text-[14px]">
-                            {msg.isGenerating ? "Thinking..." : "Thought Process"}
-                          </span>
                         </div>
-                        <ChevronDown className="h-4 w-4 opacity-50 transition-transform duration-300 group-open:-rotate-180" />
-                      </summary>
-                      <div className="px-4 pb-4 pt-1 whitespace-pre-wrap leading-relaxed opacity-80 border-t border-white/5">
-                        <div className="border-l-[3px] border-white/10 pl-4 py-2 mt-2 italic text-[14px] text-gray-300">
-                          {msg.reasoning}
-                        </div>
-                      </div>
-                    </details>
+                      );
+                    })()
                   )}
 
                   {msg.content && (
