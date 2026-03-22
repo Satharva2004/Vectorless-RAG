@@ -10,6 +10,7 @@ import {
   BrainCircuit,
   Database,
 } from "lucide-react";
+import { Analytics } from "@vercel/analytics/react";
 
 // ─── Components ───────────────────────────────────────────────────────────────
 
@@ -417,6 +418,7 @@ export default function App() {
         </div>
 
       </div>
+      <Analytics />
     </div>
   );
 }
