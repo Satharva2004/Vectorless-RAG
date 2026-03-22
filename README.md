@@ -1,12 +1,5 @@
 <div align="center">
   
-<a href="https://github.com/Satharva2004/Vectorless-RAG" target="_blank">
-  <img src="https://github.com/user-attachments/assets/46201e72-675b-43bc-bfbd-081cc6b65a1d" alt="Vectorless RAG Banner" />
-</a>
-
-<br/>
-<br/>
-
 <p align="center">
   <img src="https://img.shields.io/badge/Architecture-Vectorless-blueviolet?style=for-the-badge" alt="Vectorless" />
   <img src="https://img.shields.io/badge/Model-DeepSeek--R1--0528-blue?style=for-the-badge" alt="DeepSeek" />
@@ -27,17 +20,14 @@
   
 </div>
 
-<details open>
-<summary><h3>📢 Latest Updates</h3></summary>
-
  **🔥 Features:**
 - **Sleek Minimal UI**: A completely overhauled frontend focused on readability and "Wizarding World" aesthetics.
 - **Auto-Scrolling Reasoning**: Real-time "Thinking" blocks that scroll intelligently as the model reasons through the text.
 - **DeepSeek-R1 Integration**: Powered by Featherless AI for state-of-the-art reasoning over 100% grounded context.
  
  **📝 Concepts:**
-- **Knowledge Hierarchy**: We've transformed 'Harry Potter and the Philosopher's Stone' into a semantic tree structure that preserves the narrative flow of every chapter.
-- **Zero-Vector Retrieval**: We achieved 100% accuracy on complex plot queries without a single embedding call.
+- **Knowledge Hierarchy**: I've transformed 'Harry Potter and the Philosopher's Stone' into a semantic tree structure that preserves the narrative flow of every chapter.
+- **Zero-Vector Retrieval**: I achieved 100% accuracy on complex plot queries without a single embedding call.
 </details>
 
 ---
@@ -118,12 +108,12 @@ npm run dev
 ---
 
 # ⭐ Support
-This project demonstrates that we don't always need a Vector Database to build a powerful RAG system. Sometimes, a well-structured tree and a smart reasoning model are all you need to find the magic.
+This project demonstrates that you don't always need a Vector Database to build a powerful RAG system. Sometimes, a well-structured tree and a smart reasoning model are all you need to find the magic.
 
 Leave a star 🌟 if you find this architecture useful!
 
 ### Connect
-[![Twitter](https://img.shields.io/badge/Twitter-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/Satharva2004)&nbsp;
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/atharvasawant0804/)
 [![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Satharva2004)
 
 ---
