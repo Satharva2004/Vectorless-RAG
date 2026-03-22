@@ -258,15 +258,14 @@ export default function App() {
   };
 
   return (
-    <div className="flex items-center justify-center h-screen p-12 md:p-8 overflow-hidden bg-transparent">
+    <div className="flex items-center justify-center h-[100dvh] p-0 sm:p-4 md:p-8 overflow-hidden bg-transparent">
       {/* ── Main App Container ── */}
-      <div className="flex flex-col w-full max-w-[1800px] h-full rounded-[2rem] overflow-hidden bg-white/95 backdrop-blur-3xl shadow-app-container border border-white/60 relative">
+      <div className="flex flex-col w-full max-w-[1800px] h-full rounded-none sm:rounded-[2rem] overflow-hidden bg-white/95 backdrop-blur-3xl shadow-app-container border-x-0 sm:border border-white/60 relative">
 
-        {/* Header */}
-        <header className="flex justify-center items-center px-8 h-20 shrink-0 z-10 border-b border-gray-100/50">
-          <div className="flex items-center gap-2 text-[14px] font-bold text-gray-900 tracking-tight">
+        <header className="flex justify-center items-center px-4 sm:px-8 h-16 sm:h-20 shrink-0 z-10 border-b border-gray-100/50">
+          <div className="flex items-center gap-2 text-[13px] sm:text-[14px] font-bold text-gray-900 tracking-tight">
             <BookOpen className="w-4 h-4 text-orange-500" />
-            Harry Potter Vectorless RAG <span className="text-gray-300 font-normal">|</span> <span className="text-gray-500 font-medium">DeepSeek R1</span>
+            <span className="truncate">Harry Potter Vectorless RAG</span> <span className="text-gray-300 font-normal">|</span> <span className="text-gray-500 font-medium whitespace-nowrap">DeepSeek R1</span>
           </div>
         </header>
 
@@ -278,13 +277,13 @@ export default function App() {
         </div>
 
         {/* Messages Area */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-6 lg:px-24 py-6 z-10 relative">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-12 lg:px-24 py-4 sm:py-6 z-10 relative">
           <div className="max-w-3xl mx-auto flex flex-col min-h-full">
 
             {messages.length === 0 ? (
               /* Empty state */
               <div className="flex flex-col items-center justify-center flex-1 animate-in fade-in duration-700 mt-0">
-                <h1 className="text-[34px] md:text-[40px] font-bold tracking-tight text-center text-gray-900 mb-14 leading-[1.15]">
+                <h1 className="text-2xl sm:text-[34px] md:text-[40px] font-bold tracking-tight text-center text-gray-900 mb-8 sm:mb-14 leading-[1.15]">
                   Ready to explore<br />the Wizarding World?
                 </h1>
 
@@ -297,13 +296,13 @@ export default function App() {
                   <div key={msg.id} className="msg-enter flex flex-col">
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
-                        <div className="max-w-[85%] bg-white border border-gray-100 px-5 py-3.5 rounded-[22px] rounded-br-sm shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[15px] text-gray-800 font-medium">
+                        <div className="max-w-[90%] sm:max-w-[85%] bg-white border border-gray-100 px-4 sm:px-5 py-2.5 sm:py-3.5 rounded-[22px] rounded-br-sm shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] sm:text-[15px] text-gray-800 font-medium">
                           {msg.content}
                         </div>
                       </div>
                     ) : (
                       <div className="flex gap-4">
-                        <div className="shrink-0 w-[42px] h-[42px] rounded-full bg-[#f4f7fa] flex items-center justify-center border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] mt-1 overflow-hidden">
+                        <div className="shrink-0 w-8 h-8 sm:w-[42px] sm:h-[42px] rounded-full bg-[#f4f7fa] flex items-center justify-center border border-gray-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] mt-1 overflow-hidden">
                           <img 
                             src="https://i.pinimg.com/736x/68/8b/d2/688bd2e2fba6756a496640c10465a28e.jpg" 
                             alt="Assistant Avatar" 
@@ -360,10 +359,10 @@ export default function App() {
         </div>
 
         {/* ── Input Area ── */}
-        <div className="px-6 lg:px-24 pb-8 pt-2 shrink-0 z-20 relative flex flex-col items-center">
+        <div className="px-4 sm:px-12 lg:px-24 pb-4 sm:pb-8 pt-2 shrink-0 z-20 relative flex flex-col items-center">
 
           {/* Input Container */}
-          <div className="w-full max-w-[800px] bg-white rounded-[24px] shadow-[0_10px_40px_-10px_rgba(0,0,0,0.06)] border border-[#eef2f5] p-3 focus-within:ring-4 focus-within:ring-[#eef2f5] transition-all flex flex-col">
+          <div className="w-full max-w-[800px] bg-white rounded-[20px] sm:rounded-[24px] shadow-[0_10px_40px_-10px_rgba(0,0,0,0.06)] border border-[#eef2f5] p-2 sm:p-3 focus-within:ring-4 focus-within:ring-[#eef2f5] transition-all flex flex-col">
 
             <div className="flex items-end gap-2 px-1">
               <textarea
@@ -372,7 +371,7 @@ export default function App() {
                 onKeyDown={handleKeyDown}
                 placeholder="Ask about Harry Potter and the Philosopher's Stone..."
                 disabled={busy}
-                className="flex-1 resize-none bg-transparent border-0 outline-none text-[15px] font-medium text-gray-800 placeholder:text-gray-400 placeholder:font-normal py-3 px-3 min-h-[46px] max-h-[200px] custom-scrollbar"
+                className="flex-1 resize-none bg-transparent border-0 outline-none text-[14px] sm:text-[15px] font-medium text-gray-800 placeholder:text-gray-400 placeholder:font-normal py-2 sm:py-3 px-2 sm:px-3 min-h-[40px] sm:min-h-[46px] max-h-[200px] custom-scrollbar"
                 rows={1}
                 onInput={(e) => {
                   const t = e.currentTarget;
@@ -381,16 +380,16 @@ export default function App() {
                 }}
               />
 
-              <div className="flex items-center gap-2 h-[44px]">
+              <div className="flex items-center gap-2 h-[40px] sm:h-[44px]">
                 <button
                   onClick={() => submitQuery(inputValue.trim())}
                   disabled={!inputValue.trim() || busy}
-                  className={`w-[44px] h-[44px] rounded-full flex items-center justify-center transition-all shrink-0 ${inputValue.trim() && !busy
+                  className={`w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-full flex items-center justify-center transition-all shrink-0 ${inputValue.trim() && !busy
                     ? "bg-[#1e1f24] text-white hover:bg-black shadow-md"
                     : "bg-[#eef2f5] text-gray-400"
                     }`}
                 >
-                  {busy ? <Loader2 className="w-[18px] h-[18px] animate-spin" /> : <Send className="w-[18px] h-[18px] -ml-[2px]" strokeWidth={2.5} />}
+                  {busy ? <Loader2 className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px] animate-spin" /> : <Send className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px] -ml-[2px]" strokeWidth={2.5} />}
                 </button>
               </div>
             </div>
